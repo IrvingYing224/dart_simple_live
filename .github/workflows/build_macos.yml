@@ -28,7 +28,7 @@ jobs:
       - name: Enable macOS desktop support
         run: flutter config --enable-macos-desktop
 
-      # --- 处理核心库 simple_live_core ---
+      # --- 核心库 simple_live_core ---
       - name: Resolve Core Dependencies
         working-directory: ./simple_live_core
         run: flutter pub get
@@ -37,7 +37,7 @@ jobs:
         working-directory: ./simple_live_core
         run: dart run build_runner build --delete-conflicting-outputs || echo "build_runner skipped for core"
 
-      # --- 处理客户端 simple_live_app ---
+      # --- 客户端 simple_live_app ---
       - name: Resolve App Dependencies
         working-directory: ./simple_live_app
         run: flutter pub get
@@ -46,12 +46,10 @@ jobs:
         working-directory: ./simple_live_app
         run: dart run build_runner build --delete-conflicting-outputs || echo "build_runner skipped for app"
 
-      # --- 【关键修改】禁用 Xcode 签名 ---
-      - name: Disable Code Signing
+      # --- 禁用 Xcode 强制签名 (防止构建失败) ---
+      - name: Disable Code Signing Requirement
         working-directory: ./simple_live_app/macos
         run: |
-          echo "Disabling code signing..."
-          # 修改 project.pbxproj 移除签名配置
           sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' Runner.xcodeproj/project.pbxproj
           sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' Runner.xcodeproj/project.pbxproj
           sed -i '' 's/CODE_SIGN_IDENTITY = ".*"/CODE_SIGN_IDENTITY = ""/g' Runner.xcodeproj/project.pbxproj
@@ -60,14 +58,20 @@ jobs:
       # --- 构建 ---
       - name: Build macOS Release
         working-directory: ./simple_live_app
-        # 移除了不支持的 --no-codesign 参数
         run: flutter build macos --release
+
+      # --- 【关键修复步骤】手动添加 Ad-hoc 签名 ---
+      # Apple Silicon 必须有签名才能运行，这里使用 "-" 进行本地自签名，同时 --deep 确保 framework 也被签名
+      - name: Ad-hoc Sign App
+        working-directory: ./simple_live_app/build/macos/Build/Products/Release
+        run: |
+          echo "Applying ad-hoc signature..."
+          codesign --force --deep --sign - "Simple Live.app"
 
       # --- 打包 ---
       - name: Package Application
         working-directory: ./simple_live_app/build/macos/Build/Products/Release
         run: |
-          echo "Packaging app..."
           APP_NAME=$(find . -maxdepth 1 -name "*.app" -type d -print -quit)
           if [ -z "$APP_NAME" ]; then
             echo "Error: .app file not found!"
