@@ -31,15 +31,24 @@ jobs:
           cd simple_live_app
           flutter build macos --release
           
+# ... 前面的步骤保持不变 ...
+
       - name: Compress App
-        # GitHub Artifact 上传文件夹比较慢，我们先打包成 zip
         run: |
+          # 进入编译输出目录
           cd simple_live_app/build/macos/Build/Products/Release
-          # 将 .app 文件夹压缩为 zip
-          zip -r simple_live_macos.zip simple_live_app.app
+          
+          # 调试步骤：打印一下这里面到底有什么文件
+          echo "Listing files in Release directory:"
+          ls -al
+          
+          # 修正步骤：使用 *.app 通配符
+          # 这样无论它叫 Runner.app 还是 simple_live_app.app，都能打包
+          zip -r simple_live_macos.zip *.app
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: simple_live_macos_app
+          # 这里的路径要对应上面生成的 zip
           path: simple_live_app/build/macos/Build/Products/Release/simple_live_macos.zip
