@@ -1,0 +1,42 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch: # 允许手动点击按钮触发
+
+jobs:
+  build-ios:
+    runs-on: macos-latest # 关键：使用 GitHub 的 Mac 服务器
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0' # 锁定项目要求的版本
+          channel: 'stable'
+          
+      - name: Install Dependencies
+        run: |
+          cd simple_live_app
+          flutter pub get
+          cd ios
+          pod install --repo-update
+          
+      - name: Build IPA (No Codesign)
+        run: |
+          cd simple_live_app
+          # 关键参数: --no-codesign
+          flutter build ios --release --no-codesign
+          
+      - name: Payload Compression
+        run: |
+          cd simple_live_app/build/ios/iphoneos
+          mkdir Payload
+          mv Runner.app Payload/
+          zip -r simple_live.ipa Payload
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: simple_live_ios_unsigned
+          path: simple_live_app/build/ios/iphoneos/simple_live.ipa
