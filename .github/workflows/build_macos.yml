@@ -1,7 +1,7 @@
 name: Build macOS Client
 
 on:
-  workflow_dispatch: # 允许手动触发构建
+  workflow_dispatch:
   push:
     branches:
       - master
@@ -22,7 +22,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.x' # 根据项目要求锁定在 3.22 版本
+          flutter-version: '3.22.x'
           channel: 'stable'
 
       - name: Enable macOS desktop support
@@ -35,7 +35,6 @@ jobs:
 
       - name: Run Core Build Runner
         working-directory: ./simple_live_core
-        # 尝试运行代码生成，如果失败（可能不需要）则忽略错误继续
         run: dart run build_runner build --delete-conflicting-outputs || echo "build_runner skipped for core"
 
       # --- 处理客户端 simple_live_app ---
@@ -45,20 +44,30 @@ jobs:
 
       - name: Run App Build Runner
         working-directory: ./simple_live_app
-        # 生成 JSON 序列化代码等
         run: dart run build_runner build --delete-conflicting-outputs || echo "build_runner skipped for app"
 
+      # --- 【关键修改】禁用 Xcode 签名 ---
+      - name: Disable Code Signing
+        working-directory: ./simple_live_app/macos
+        run: |
+          echo "Disabling code signing..."
+          # 修改 project.pbxproj 移除签名配置
+          sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGN_IDENTITY = ".*"/CODE_SIGN_IDENTITY = ""/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/DEVELOPMENT_TEAM = .*/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
+
+      # --- 构建 ---
       - name: Build macOS Release
         working-directory: ./simple_live_app
-        # 使用 --no-codesign 跳过签名，因为云编译环境没有你的开发者证书
-        run: flutter build macos --release --no-codesign
+        # 移除了不支持的 --no-codesign 参数
+        run: flutter build macos --release
 
-      # --- 打包和上传 ---
+      # --- 打包 ---
       - name: Package Application
         working-directory: ./simple_live_app/build/macos/Build/Products/Release
         run: |
           echo "Packaging app..."
-          # 查找 .app 文件并压缩
           APP_NAME=$(find . -maxdepth 1 -name "*.app" -type d -print -quit)
           if [ -z "$APP_NAME" ]; then
             echo "Error: .app file not found!"
