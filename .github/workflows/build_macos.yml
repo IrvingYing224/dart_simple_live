@@ -1,4 +1,4 @@
-name: Optimized macOS Build
+name: Fixed macOS Build (Anti-Crash)
 
 on:
   workflow_dispatch: # 手动触发
@@ -6,45 +6,44 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
-    timeout-minutes: 30 # 防止卡死
+    timeout-minutes: 40
     
     steps:
       - uses: actions/checkout@v4
       
-      # 【优化1】读取项目版本号
+      # 1. 获取版本号
       - name: Get App Version
         id: version
         run: |
           cd simple_live_app
-          # 从 pubspec.yaml 提取 version 字段
           APP_VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | awk '{print $1}')
           echo "VERSION=$APP_VERSION" >> $GITHUB_OUTPUT
           echo "Detected Version: $APP_VERSION"
 
-      # 【优化2】配置 Flutter 环境并开启缓存
+      # 2. 配置 Flutter (带缓存)
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.22.0'
           channel: 'stable'
-          cache: true # 开启 SDK 缓存
+          cache: true
           
       - name: Enable macOS Desktop
         run: flutter config --enable-macos-desktop
 
+      # 3. 安装依赖
       - name: Install Dependencies
         run: |
           cd simple_live_app
           flutter pub get
           cd macos
-          # 忽略警告，强制更新仓库
           pod install --repo-update
 
-      # 【优化3】注入防闪退权限 (关键)
+      # 4. 注入防闪退权限 (关键步骤 A)
+      # 这里创建了一个“特权清单”，允许加载未签名的 MPV 库和进行网络请求
       - name: Inject Permissive Entitlements
         run: |
           cd simple_live_app/macos/Runner
-          # 覆盖权限文件，允许网络访问和加载未签名库
           cat > Release.entitlements <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -64,33 +63,48 @@ jobs:
               <true/>
               <key>com.apple.security.cs.allow-dyld-environment-variables</key>
               <true/>
+              <key>com.apple.security.assets.pictures.read-write</key>
+              <true/>
+              <key>com.apple.security.assets.downloads.read-write</key>
+              <true/>
           </dict>
           </plist>
           EOF
 
+      # 5. 编译 App
       - name: Build macOS App (Release)
         run: |
           cd simple_live_app
           flutter build macos --release
 
-      # 【优化4】执行 Ad-hoc 签名
-      # 这步是为了把刚才注入的权限“焊死”在 App 里
-      - name: Ad-hoc Re-Sign
+      # 6. 深度签名并应用权限 (关键步骤 B - 修正点)
+      # 之前的脚本漏掉了 --entitlements 参数，导致权限没写进去
+      - name: Ad-hoc Re-Sign with Entitlements
         run: |
-          cd simple_live_app/build/macos/Build/Products/Release
-          # 强制深度签名 (-s - 表示使用本地临时签名)
-          codesign --force --deep --sign - *.app
+          # 定义路径变量以便操作
+          ENTITLEMENTS_PATH="$GITHUB_WORKSPACE/simple_live_app/macos/Runner/Release.entitlements"
+          APP_PATH="$GITHUB_WORKSPACE/simple_live_app/build/macos/Build/Products/Release/*.app"
+          
+          echo "Applying entitlements from: $ENTITLEMENTS_PATH"
+          
+          # 强制重签名，并显式指定权限文件
+          codesign --force --deep --sign - --entitlements "$ENTITLEMENTS_PATH" $APP_PATH
+          
+          # 验证一下签名里有没有我们要的权限 (会在日志里打印出来)
+          echo "Verifying entitlements..."
+          codesign -d --entitlements :- $APP_PATH
 
+      # 7. 压缩打包
       - name: Compress App
         run: |
           cd simple_live_app/build/macos/Build/Products/Release
-          # 使用版本号命名 zip
-          FILENAME="simple_live_macos_v${{ steps.version.outputs.VERSION }}.zip"
+          FILENAME="simple_live_macos_v${{ steps.version.outputs.VERSION }}_fixed.zip"
           zip -r $FILENAME *.app
           echo "OUTPUT_FILENAME=$FILENAME" >> $GITHUB_ENV
 
+      # 8. 上传结果
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: simple_live_macos_optimized
+          name: simple_live_macos_fixed
           path: simple_live_app/build/macos/Build/Products/Release/${{ env.OUTPUT_FILENAME }}
