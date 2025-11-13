@@ -1,0 +1,45 @@
+name: Build macOS App
+
+on:
+  workflow_dispatch: # 手动触发
+
+jobs:
+  build-macos:
+    runs-on: macos-latest # 使用 GitHub 的 Mac 服务器
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.0' # 锁定版本
+          channel: 'stable'
+          
+      - name: Enable macOS Desktop
+        run: flutter config --enable-macos-desktop
+
+      - name: Install Dependencies
+        run: |
+          cd simple_live_app
+          flutter pub get
+          # macOS 也是需要 CocoaPods 的
+          cd macos
+          pod install --repo-update
+          
+      - name: Build macOS App (Release)
+        run: |
+          cd simple_live_app
+          flutter build macos --release
+          
+      - name: Compress App
+        # GitHub Artifact 上传文件夹比较慢，我们先打包成 zip
+        run: |
+          cd simple_live_app/build/macos/Build/Products/Release
+          # 将 .app 文件夹压缩为 zip
+          zip -r simple_live_macos.zip simple_live_app.app
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: simple_live_macos_app
+          path: simple_live_app/build/macos/Build/Products/Release/simple_live_macos.zip
