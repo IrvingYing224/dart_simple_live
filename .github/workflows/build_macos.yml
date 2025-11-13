@@ -1,52 +1,99 @@
-name: Build macOS App
+name: macOS No-Sandbox Build
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [ main, master ]
+  workflow_dispatch: # 手动触发
 
 jobs:
   build-macos:
     runs-on: macos-latest
-
+    timeout-minutes: 40
+    
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      
+      # 1. 获取版本号
+      - name: Get App Version
+        id: version
+        run: |
+          cd simple_live_app
+          APP_VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //' | awk '{print $1}')
+          echo "VERSION=$APP_VERSION" >> $GITHUB_OUTPUT
+          echo "Detected Version: $APP_VERSION"
 
-      - name: Set up Flutter
+      # 2. 配置 Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.3' # 版本可与原项目 pubspec 中保持一致
-          channel: stable
-
-      - name: Flutter doctor
-        run: flutter doctor -v
-
-      - name: Get dependencies
-        run: flutter pub get
-
-      # ⚠️ macOS 依赖初始化
-      - name: Enable macOS build
+          flutter-version: '3.22.0'
+          channel: 'stable'
+          cache: true
+          
+      - name: Enable macOS Desktop
         run: flutter config --enable-macos-desktop
 
-      # ✅ 如果项目用到 ffmpeg / mpv，请提前安装（原项目依赖 video_player/mpv）
-      - name: Install ffmpeg and mpv
+      # 3. 安装依赖
+      - name: Install Dependencies
         run: |
-          brew install ffmpeg mpv || true
-          brew link mpv || true
+          cd simple_live_app
+          flutter pub get
+          cd macos
+          pod install --repo-update
 
-      - name: Build release version
-        run: flutter build macos --release
-
-      - name: Package .app
+      # 4. 生成“去沙盒”权限文件 (核心修改)
+      # 注意：这里删除了 app-sandbox 和 network 相关的 key
+      # 只保留允许加载未签名库和内存执行权限
+      - name: Generate No-Sandbox Entitlements
         run: |
-          APP_PATH="build/macos/Build/Products/Release/Simple Live.app"
-          mkdir -p out
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" out/SimpleLive-mac.zip
-          ls -lh out
+          cd simple_live_app/macos/Runner
+          cat > Release.entitlements <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.cs.disable-library-validation</key>
+              <true/>
+              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+              <true/>
+              <key>com.apple.security.cs.allow-jit</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
 
-      - name: Upload build artifact
+      # 5. 编译 App
+      - name: Build macOS App (Release)
+        run: |
+          cd simple_live_app
+          flutter build macos --release
+
+      # 6. 移除沙盒限制并重签名 (核心修改)
+      - name: Remove Sandbox & Re-Sign
+        run: |
+          ENTITLEMENTS_PATH="$GITHUB_WORKSPACE/simple_live_app/macos/Runner/Release.entitlements"
+          # 准确找到生成的 App 路径
+          APP_PATH=$(find "$GITHUB_WORKSPACE/simple_live_app/build/macos/Build/Products/Release" -name "*.app" | head -n 1)
+          
+          echo "Target App: $APP_PATH"
+          echo "Applying No-Sandbox Entitlements..."
+          
+          # 强制重签名
+          codesign --force --deep --sign - --entitlements "$ENTITLEMENTS_PATH" "$APP_PATH"
+          
+          # 验证签名 (这次你应该能看到 entitlements 内容了)
+          echo "=== Verification Output ==="
+          codesign -d --entitlements :- "$APP_PATH" || true
+
+      # 7. 压缩打包
+      - name: Compress App
+        run: |
+          cd simple_live_app/build/macos/Build/Products/Release
+          FILENAME="simple_live_macos_v${{ steps.version.outputs.VERSION }}_nosandbox.zip"
+          zip -r $FILENAME *.app
+          echo "OUTPUT_FILENAME=$FILENAME" >> $GITHUB_ENV
+
+      # 8. 上传结果
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: simple-live-macos
-          path: out/SimpleLive-mac.zip
+          name: simple_live_macos_nosandbox
+          path: simple_live_app/build/macos/Build/Products/Release/${{ env.OUTPUT_FILENAME }}
