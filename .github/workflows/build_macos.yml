@@ -8,12 +8,12 @@ jobs:
     name: Build macOS
     runs-on: macos-latest
     permissions:
-      contents: write # 需要此权限才能创建Release
+      contents: write 
     steps:
       # 1. 签出代码
       - uses: actions/checkout@v4
         with:
-          ref: master # 确保你签出的是正确的分支
+          ref: master
 
       # 2. 设置Flutter
       - name: Flutter action
@@ -32,7 +32,7 @@ jobs:
           cd simple_live_app
           flutter pub get
 
-      # 5. 安装 appdmg (flutter_distributor 打包 .dmg 需要)
+      # 5. 安装 appdmg
       - name: Install appdmg
         run: npm install -g appdmg
 
@@ -46,7 +46,7 @@ jobs:
           cd simple_live_app
           flutter_distributor package --platform macos --targets dmg,zip --skip-clean
 
-      # 8. 上传MAC包至Artifacts (方便在 CI 界面下载)
+      # 8. 上传MAC包至Artifacts
       - name: Upload MacOS to Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -55,14 +55,13 @@ jobs:
             simple_live_app/build/dist/*/*.dmg
             simple_live_app/build/dist/*/*.zip
 
-      # 9. 读取版本信息 (用于Release)
+      # 9. 读取版本信息 (*** 已修正 ***)
       - name: Read version
         id: version
         uses: juliangruber/read-file-action@v1
         with:
-          path: assets/app_version.json
-      - name: Echo version
-        run: echo "${{ fromJson(steps.version.outputs.content).version }}"
+          path: assets/app_version.json # 路径保持不变
+        working-directory: simple_live_app # <-- 添加这一行
 
       # 10. 上传至Release
       - name: Upload Release
@@ -71,7 +70,7 @@ jobs:
           name: "${{ fromJson(steps.version.outputs.content).version }}"
           body: "${{ fromJson(steps.version.outputs.content).version_desc }}"
           prerelease: ${{ fromJson(steps.version.outputs.content).prerelease }}
-          token: ${{ secrets.TOKEN }} # 确保你的仓库有这个TOKEN (通常是 GITHUB_TOKEN，但这里用了自定义的TOKEN)
+          token: ${{ secrets.TOKEN }}
           files: |
             simple_live_app/build/dist/*/*.dmg
             simple_live_app/build/dist/*/*.zip
