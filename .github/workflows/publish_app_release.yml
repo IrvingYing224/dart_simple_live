@@ -1,9 +1,15 @@
+# name: app-build-action
+# #推送Tag时触发
+# on:
+#   push:
+#     tags:
+#       - "v*"
+
 name: app-build-action
-#推送Tag时触发
+
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch: # 允许手动点击按钮触发
+  
 jobs:
   build-mac-ios-android:
     runs-on: macos-latest
