@@ -60,8 +60,8 @@ jobs:
         id: version
         uses: juliangruber/read-file-action@v1
         with:
-          path: assets/app_version.json # 路径保持不变
-        working-directory: simple_live_app # <-- 添加这一行
+          # 直接提供从根目录出发的完整路径
+          path: simple_live_app/assets/app_version.json 
 
       # 10. 上传至Release
       - name: Upload Release
