@@ -55,25 +55,5 @@ jobs:
             simple_live_app/build/dist/*/*.dmg
             simple_live_app/build/dist/*/*.zip
 
-      # 9. 读取版本信息 (*** 已修正 ***)
-      - name: Read version
-        id: version
-        uses: juliangruber/read-file-action@v1
-        with:
-          # 直接提供从根目录出发的完整路径
-          path: simple_live_app/assets/app_version.json 
-
-      # 10. 上传至Release
-      - name: Upload Release
-        uses: softprops/action-gh-release@v1
-        with:
-          name: "${{ fromJson(steps.version.outputs.content).version }}"
-          body: "${{ fromJson(steps.version.outputs.content).version_desc }}"
-          prerelease: ${{ fromJson(steps.version.outputs.content).prerelease }}
-          token: ${{ secrets.TOKEN }}
-          files: |
-            simple_live_app/build/dist/*/*.dmg
-            simple_live_app/build/dist/*/*.zip
-            
-      # 11. 完成
+      # 9. 完成
       - run: echo "🍏 macOS job's status is ${{ job.status }}."
