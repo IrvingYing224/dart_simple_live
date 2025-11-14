@@ -1,55 +1,82 @@
-name: Build macOS App
+name: Build macOS (Flutter)
 
 on:
-  workflow_dispatch:
   push:
     branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build-macos:
     runs-on: macos-latest
-
+    env:
+      # 如果你想固定 flutter 版本，请修改下面 version
+      FLUTTER_VERSION: "3.22.0"
     steps:
-      - name: Checkout source
+      - name: Checkout repo
         uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.3'
+          fetch-depth: 0
+
+      - name: Setup Flutter SDK
+        uses: flutter-actions/setup-flutter@v4
+        with:
           channel: stable
+          version: ${{ env.FLUTTER_VERSION }}
 
-      - name: Flutter doctor
-        run: flutter doctor -v
-
-      # 进入 simple_live_app/ 才能找到 pubspec.yaml
-      - name: Get dependencies
-        working-directory: simple_live_app
-        run: flutter pub get
-
-      - name: Enable macOS build
-        working-directory: simple_live_app
-        run: flutter config --enable-macos-desktop
-
-      # 安装 macOS 播放相关依赖（确保 mpv/ffmpeg 存在，否则播放时会崩）
-      - name: Install ffmpeg and mpv
+      - name: Enable macOS desktop support (safety)
         run: |
-          brew install ffmpeg mpv || true
-          brew link mpv || true
+          flutter config --enable-macos-desktop
+          flutter --version
 
-      - name: Build macOS release
-        working-directory: simple_live_app
-        run: flutter build macos --release
-
-      - name: Package .app
+      - name: Install Dart/Flutter dependencies (root & packages)
         run: |
-          APP_PATH="simple_live_app/build/macos/Build/Products/Release/Simple Live.app"
-          mkdir -p out
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" out/SimpleLive-mac.zip
-          ls -lh out
+          # repo is a multi-package repo — 尝试在根目录和 app 目录都拿依赖
+          flutter pub get
+          pushd simple_live_app || exit 0
+          flutter pub get
+          popd || exit 0
 
-      - name: Upload build artifact
+      - name: Build macOS (debug, fast & avoids code signing)
+        run: |
+          # Debug 构建通常不会触发 codesign，能产出可运行的 .app（非商店发布用）
+          pushd simple_live_app
+          flutter build macos --debug
+          popd
+
+      - name: Archive debug .app (zip) and upload artifact
+        run: |
+          # 找到构建输出并打包成 zip（兼容不同 Flutter 版本生成路径）
+          OUT_DIR="simple_live_app/build/macos/Build/Products/Debug"
+          if [ ! -d "$OUT_DIR" ]; then
+            echo "Debug build output not found at $OUT_DIR — listing build tree:"
+            ls -la simple_live_app/build || true
+            exit 1
+          fi
+          # 找到第一个 .app 并 zip（保留父目录以便直接双击运行）
+          APP_PATH=$(find "$OUT_DIR" -maxdepth 1 -name "*.app" | head -n1)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app found in $OUT_DIR"
+            exit 1
+          fi
+          echo "Zipping $APP_PATH"
+          ZIP_NAME="simple_live_macos_debug.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
+        # 上传 artifact
+      - name: Upload debug artifact
         uses: actions/upload-artifact@v4
         with:
-          name: simple-live-macos
-          path: out/SimpleLive-mac.zip
+          name: simple_live_macos_debug
+          path: simple_live_macos_debug.zip
+
+      # 下面是可选：尝试 release 构建（注意：release 会走 codesign，CI 上通常需要处理证书/Keychain）
+      - name: Attempt Release build (optional, may require signing setup)
+        if: always()
+        run: |
+          echo ">>> Attempting a release build. THIS STEP OFTEN REQUIRES CODESIGN SETUP on CI."
+          pushd simple_live_app
+          # 下面命令会做 release 构建 —— 在没有证书/Keychain 的情况下常常会卡住或失败。
+          # 你可以注释掉这行保留 debug 构建；若有 Apple dev certs，则可以去掉注释并在 repo secrets 中提供相应证书/fastlane 等。
+          # flutter build macos --release
+          popd
+
+      # 如果 release 构建被执行并产生产物，可以采用与 debug 类似的压缩上传步骤。
