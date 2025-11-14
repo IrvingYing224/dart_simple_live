@@ -1,82 +1,80 @@
-name: Build macOS (Flutter)
+name: Build macOS
 
 on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+  workflow_dispatch: # 允许手动点击按钮触发
 
 jobs:
   build-macos:
+    name: Build macOS
     runs-on: macos-latest
-    env:
-      # 如果你想固定 flutter 版本，请修改下面 version
-      FLUTTER_VERSION: "3.22.0"
+    permissions:
+      contents: write # 需要此权限才能创建Release
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      # 1. 签出代码
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          ref: master # 确保你签出的是正确的分支
 
-      - name: Setup Flutter SDK
-        uses: flutter-actions/setup-flutter@v4
+      # 2. 设置Flutter
+      - name: Flutter action
+        uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          version: ${{ env.FLUTTER_VERSION }}
+          flutter-version: '3.22.x'
+          cache: true
 
-      - name: Enable macOS desktop support (safety)
-        run: |
-          flutter config --enable-macos-desktop
-          flutter --version
+      # 3. 打开MAC Desktop支持
+      - name: Enable Flutter Desktop
+        run: flutter config --enable-macos-desktop
 
-      - name: Install Dart/Flutter dependencies (root & packages)
+      # 4. 更新Flutter的packages
+      - name: Restore packages
         run: |
-          # repo is a multi-package repo — 尝试在根目录和 app 目录都拿依赖
+          cd simple_live_app
           flutter pub get
-          pushd simple_live_app || exit 0
-          flutter pub get
-          popd || exit 0
 
-      - name: Build macOS (debug, fast & avoids code signing)
-        run: |
-          # Debug 构建通常不会触发 codesign，能产出可运行的 .app（非商店发布用）
-          pushd simple_live_app
-          flutter build macos --debug
-          popd
+      # 5. 安装 appdmg (flutter_distributor 打包 .dmg 需要)
+      - name: Install appdmg
+        run: npm install -g appdmg
 
-      - name: Archive debug .app (zip) and upload artifact
+      # 6. 设置 flutter_distributor 环境
+      - name: Install flutter_distributor
+        run: dart pub global activate flutter_distributor
+
+      # 7. 打包 MAC (dmg 和 zip)
+      - name: Build MacOS
         run: |
-          # 找到构建输出并打包成 zip（兼容不同 Flutter 版本生成路径）
-          OUT_DIR="simple_live_app/build/macos/Build/Products/Debug"
-          if [ ! -d "$OUT_DIR" ]; then
-            echo "Debug build output not found at $OUT_DIR — listing build tree:"
-            ls -la simple_live_app/build || true
-            exit 1
-          fi
-          # 找到第一个 .app 并 zip（保留父目录以便直接双击运行）
-          APP_PATH=$(find "$OUT_DIR" -maxdepth 1 -name "*.app" | head -n1)
-          if [ -z "$APP_PATH" ]; then
-            echo "No .app found in $OUT_DIR"
-            exit 1
-          fi
-          echo "Zipping $APP_PATH"
-          ZIP_NAME="simple_live_macos_debug.zip"
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$ZIP_NAME"
-        # 上传 artifact
-      - name: Upload debug artifact
+          cd simple_live_app
+          flutter_distributor package --platform macos --targets dmg,zip --skip-clean
+
+      # 8. 上传MAC包至Artifacts (方便在 CI 界面下载)
+      - name: Upload MacOS to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: simple_live_macos_debug
-          path: simple_live_macos_debug.zip
+          name: mac-build
+          path: |
+            simple_live_app/build/dist/*/*.dmg
+            simple_live_app/build/dist/*/*.zip
 
-      # 下面是可选：尝试 release 构建（注意：release 会走 codesign，CI 上通常需要处理证书/Keychain）
-      - name: Attempt Release build (optional, may require signing setup)
-        if: always()
-        run: |
-          echo ">>> Attempting a release build. THIS STEP OFTEN REQUIRES CODESIGN SETUP on CI."
-          pushd simple_live_app
-          # 下面命令会做 release 构建 —— 在没有证书/Keychain 的情况下常常会卡住或失败。
-          # 你可以注释掉这行保留 debug 构建；若有 Apple dev certs，则可以去掉注释并在 repo secrets 中提供相应证书/fastlane 等。
-          # flutter build macos --release
-          popd
+      # 9. 读取版本信息 (用于Release)
+      - name: Read version
+        id: version
+        uses: juliangruber/read-file-action@v1
+        with:
+          path: assets/app_version.json
+      - name: Echo version
+        run: echo "${{ fromJson(steps.version.outputs.content).version }}"
 
-      # 如果 release 构建被执行并产生产物，可以采用与 debug 类似的压缩上传步骤。
+      # 10. 上传至Release
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "${{ fromJson(steps.version.outputs.content).version }}"
+          body: "${{ fromJson(steps.version.outputs.content).version_desc }}"
+          prerelease: ${{ fromJson(steps.version.outputs.content).prerelease }}
+          token: ${{ secrets.TOKEN }} # 确保你的仓库有这个TOKEN (通常是 GITHUB_TOKEN，但这里用了自定义的TOKEN)
+          files: |
+            simple_live_app/build/dist/*/*.dmg
+            simple_live_app/build/dist/*/*.zip
+            
+      # 11. 完成
+      - run: echo "🍏 macOS job's status is ${{ job.status }}."
