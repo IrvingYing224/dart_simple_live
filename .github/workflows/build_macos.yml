@@ -1,87 +1,55 @@
-name: Build macOS Client
+name: Build macOS App
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - master
-      - dev
-    paths:
-      - 'simple_live_app/**'
-      - 'simple_live_core/**'
+    branches: [ main, master ]
 
 jobs:
   build-macos:
-    name: Build macOS App
     runs-on: macos-latest
-    
+
     steps:
-      - name: Checkout repository
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Flutter
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.x'
-          channel: 'stable'
+          flutter-version: '3.24.3'
+          channel: stable
 
-      - name: Enable macOS desktop support
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      # 进入 simple_live_app/ 才能找到 pubspec.yaml
+      - name: Get dependencies
+        working-directory: simple_live_app
+        run: flutter pub get
+
+      - name: Enable macOS build
+        working-directory: simple_live_app
         run: flutter config --enable-macos-desktop
 
-      # --- 核心库 simple_live_core ---
-      - name: Resolve Core Dependencies
-        working-directory: ./simple_live_core
-        run: flutter pub get
-
-      - name: Run Core Build Runner
-        working-directory: ./simple_live_core
-        run: dart run build_runner build --delete-conflicting-outputs || echo "build_runner skipped for core"
-
-      # --- 客户端 simple_live_app ---
-      - name: Resolve App Dependencies
-        working-directory: ./simple_live_app
-        run: flutter pub get
-
-      - name: Run App Build Runner
-        working-directory: ./simple_live_app
-        run: dart run build_runner build --delete-conflicting-outputs || echo "build_runner skipped for app"
-
-      # --- 禁用 Xcode 强制签名 (防止构建失败) ---
-      - name: Disable Code Signing Requirement
-        working-directory: ./simple_live_app/macos
+      # 安装 macOS 播放相关依赖（确保 mpv/ffmpeg 存在，否则播放时会崩）
+      - name: Install ffmpeg and mpv
         run: |
-          sed -i '' 's/CODE_SIGNING_ALLOWED = YES/CODE_SIGNING_ALLOWED = NO/g' Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGNING_REQUIRED = YES/CODE_SIGNING_REQUIRED = NO/g' Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGN_IDENTITY = ".*"/CODE_SIGN_IDENTITY = ""/g' Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/DEVELOPMENT_TEAM = .*/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
+          brew install ffmpeg mpv || true
+          brew link mpv || true
 
-      # --- 构建 ---
-      - name: Build macOS Release
-        working-directory: ./simple_live_app
+      - name: Build macOS release
+        working-directory: simple_live_app
         run: flutter build macos --release
 
-      # --- 【关键修复步骤】手动添加 Ad-hoc 签名 ---
-      # Apple Silicon 必须有签名才能运行，这里使用 "-" 进行本地自签名，同时 --deep 确保 framework 也被签名
-      - name: Ad-hoc Sign App
-        working-directory: ./simple_live_app/build/macos/Build/Products/Release
+      - name: Package .app
         run: |
-          echo "Applying ad-hoc signature..."
-          codesign --force --deep --sign - "Simple Live.app"
+          APP_PATH="simple_live_app/build/macos/Build/Products/Release/Simple Live.app"
+          mkdir -p out
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" out/SimpleLive-mac.zip
+          ls -lh out
 
-      # --- 打包 ---
-      - name: Package Application
-        working-directory: ./simple_live_app/build/macos/Build/Products/Release
-        run: |
-          APP_NAME=$(find . -maxdepth 1 -name "*.app" -type d -print -quit)
-          if [ -z "$APP_NAME" ]; then
-            echo "Error: .app file not found!"
-            exit 1
-          fi
-          zip -r simple_live_macos.zip "$APP_NAME"
-
-      - name: Upload Artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SimpleLive-macOS
-          path: ./simple_live_app/build/macos/Build/Products/Release/simple_live_macos.zip
-          retention-days: 7
+          name: simple-live-macos
+          path: out/SimpleLive-mac.zip
