@@ -21,7 +21,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.24.x" # 建议根据你项目的具体版本微调，或保持 3.38.x
+          flutter-version: "3.38.x" # 建议根据你项目的具体版本微调，或保持 3.38.x
           cache: true
 
       # 3. 开启 macOS Desktop 支持
