@@ -1,0 +1,71 @@
+name: build-apple-clients
+
+on:
+  workflow_dispatch: # 支持手动触发编译
+  push:
+    tags:
+      - "v*" # 当你推送以 v 开头的标签时自动触发
+
+jobs:
+  build-apple:
+    runs-on: macos-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      # 1. 签出代码 (默认签出触发该 Action 的分支)
+      - uses: actions/checkout@v4
+
+      # 2. 设置 Flutter 环境
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.24.x" # 建议根据你项目的具体版本微调，或保持 3.38.x
+          cache: true
+
+      # 3. 开启 macOS Desktop 支持
+      - name: Enable Flutter Desktop
+        run: flutter config --enable-macos-desktop
+
+      # 4. 获取依赖
+      - name: Restore packages
+        run: |
+          cd simple_live_app
+          flutter pub get
+
+      # 5. 安装 macOS 打包工具 (appdmg & flutter_distributor)
+      - name: Install Build Tools
+        run: |
+          npm install -g appdmg
+          dart pub global activate flutter_distributor
+
+      # 6. 编译 iOS (无签名模式)
+      - name: Build IPA (No Sign)
+        run: |
+          cd simple_live_app
+          flutter build ios --release --no-codesign
+          mkdir -p build/ios/iphoneos/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/Runner.app
+          cd build/ios/iphoneos/
+          zip -q -r ios_no_sign.ipa Payload
+
+      # 7. 编译 MacOS (生成 DMG 和 ZIP)
+      - name: Build MacOS
+        run: |
+          cd simple_live_app
+          # 确保你的环境路径包含 pub global 的 bin 目录
+          export PATH="$PATH":"$HOME/.pub-cache/bin"
+          flutter_distributor package --platform macos --targets dmg,zip --skip-clean
+
+      # 8. 上传产物到 Artifacts (可在 GitHub Actions 界面下载)
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-clients
+          path: |
+            simple_live_app/build/ios/iphoneos/ios_no_sign.ipa
+            simple_live_app/build/dist/*/*.dmg
+            simple_live_app/build/dist/*/*.zip
+
+      - run: echo "🍏 Job status is ${{ job.status }}."
